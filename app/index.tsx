@@ -1,0 +1,2 @@
+import { Redirect } from 'expo-router'; import { ActivityIndicator,StyleSheet,View } from 'react-native'; import { useAuth } from '@/lib/auth'; import { COLORS } from '@/constants/colors';
+export default function Index(){const{session,loading}=useAuth();if(loading)return <View style={s.c}><ActivityIndicator size="large" color={COLORS.primary}/></View>;return <Redirect href={session?'/(tabs)':'/login'}/>};const s=StyleSheet.create({c:{flex:1,alignItems:'center',justifyContent:'center',backgroundColor:COLORS.background}});

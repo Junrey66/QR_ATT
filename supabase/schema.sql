@@ -40,7 +40,35 @@ alter table public.profiles enable row level security;
 alter table public.events enable row level security;
 alter table public.attendance enable row level security;
 
--- 2. New-user profile trigger
+-- 2. Helper functions
+-- These bypass RLS internally so role checks do not recurse through policies.
+create or replace function public.is_teacher(user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = user_id and p.role = 'teacher'
+  );
+$$;
+
+create or replace function public.is_student(user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = user_id and p.role = 'student'
+  );
+$$;
+
+-- 3. New-user profile trigger
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -72,7 +100,7 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- 3. Profile policies
+-- 4. Profile policies
 drop policy if exists "Profiles are viewable by owner" on public.profiles;
 create policy "Profiles are viewable by owner"
   on public.profiles for select
@@ -106,7 +134,7 @@ create policy "Teachers can view profiles of their attendees"
     )
   );
 
--- 4. Event policies
+-- 5. Event policies
 drop policy if exists "Events are readable by any authenticated user" on public.events;
 create policy "Events are readable by any authenticated user"
   on public.events for select
@@ -120,20 +148,17 @@ create policy "Teachers can insert events"
   to authenticated
   with check (
     auth.uid() = created_by
-    and exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'teacher'
-    )
+    and public.is_teacher(auth.uid())
   );
 
 drop policy if exists "Users can update their own events" on public.events;
 create policy "Users can update their own events"
   on public.events for update
   to authenticated
-  using (auth.uid() = created_by)
-  with check (auth.uid() = created_by);
+  using (auth.uid() = created_by and public.is_teacher(auth.uid()))
+  with check (auth.uid() = created_by and public.is_teacher(auth.uid()));
 
--- 5. Attendance policies
+-- 6. Attendance policies
 drop policy if exists "Students can view their own attendance" on public.attendance;
 create policy "Students can view their own attendance"
   on public.attendance for select
@@ -146,10 +171,7 @@ create policy "Students can insert their own attendance"
   to authenticated
   with check (
     auth.uid() = student_id
-    and exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'student'
-    )
+    and public.is_student(auth.uid())
   );
 
 drop policy if exists "Teachers can view attendance for their events" on public.attendance;
@@ -165,6 +187,8 @@ create policy "Teachers can view attendance for their events"
   );
 
 grant usage on schema public to authenticated;
+grant execute on function public.is_teacher(uuid) to authenticated;
+grant execute on function public.is_student(uuid) to authenticated;
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update on public.events to authenticated;
 grant select, insert on public.attendance to authenticated;
